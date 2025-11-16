@@ -4,6 +4,7 @@ import { Note, NewNote } from './types';
 import { getAllNotes, setNote as storageSetNote, deleteNoteById } from './storage';
 
 const VocalNotesApp: React.FC = () => {
+  const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
   const [notes, setNotes] = useState<Note[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
@@ -43,36 +44,56 @@ const VocalNotesApp: React.FC = () => {
     }
   };
 
-  const simulateVoiceRecording = async () => {
-    setIsRecording(true);
-    timeoutRef.current = window.setTimeout(async () => {
+  // Use real recording via MediaRecorder and send audio to backend for transcription
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+      audioChunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      mr.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        // send to backend for transcription
+        const fd = new FormData();
+        fd.append('file', blob, 'note.webm');
+        try {
+          const resp = await fetch(`${API_BASE}/api/transcribe`, { method: 'POST', body: fd });
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`Transcription failed: ${text}`);
+          }
+          const data = await resp.json();
+          const transcription = data.transcription || '';
+          // ask backend to analyze
+          const analyze = await fetch(`${API_BASE}/api/analyze-note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcription }) });
+          const analyzed = analyze.ok ? await analyze.json() : { title: transcription.slice(0, 60), category: 'intervention', content: transcription, priority: 'normale' };
+          setNewNote({ title: analyzed.title?.substring(0,100) || 'Note vocale', content: analyzed.content || transcription, category: analyzed.category || 'intervention', hasNotification: analyzed.priority === 'urgente', notificationDate: '' });
+          setShowNewNoteModal(true);
+        } catch (err) {
+          console.error('Upload/transcribe error', err);
+          setNewNote({ title: 'Note vocale', content: 'Erreur transcription', category: 'intervention', hasNotification: false, notificationDate: '' });
+          setShowNewNoteModal(true);
+        }
+      };
+      mr.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Micro inaccessible', err);
+      alert('Impossible d\'accéder au micro. Vérifiez les permissions.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
       setIsRecording(false);
-      const transcription = "Vérification des installations électriques du bâtiment A, étage 3. Contrôle du tableau électrique et des prises de courant.";
-      try {
-        const response = await fetch("/api/analyze-note", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcription })
-        });
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-        const data = await response.json();
-        if (!data.title || !data.category || !data.content) throw new Error('Invalid AI response format');
-        const validCategories = ['rdv', 'tache', 'intervention'];
-        if (!validCategories.includes(data.category)) throw new Error(`Invalid category: ${data.category}`);
-        setNewNote({
-          title: data.title.substring(0, 100),
-          content: data.content.substring(0, 1000),
-          category: data.category,
-          hasNotification: data.priority === 'urgente',
-          notificationDate: data.priority === 'urgente' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16) : ''
-        });
-        setShowNewNoteModal(true);
-      } catch (error) {
-        console.error('Erreur traitement note vocale:', error);
-        setNewNote({ title: 'Nouvelle note', content: transcription, category: 'intervention', hasNotification: false, notificationDate: '' });
-        setShowNewNoteModal(true);
-      }
-    }, 2000);
+    }
   };
 
   const saveNote = async () => {
@@ -218,8 +239,12 @@ const VocalNotesApp: React.FC = () => {
       </div>
 
       <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2">
-        <button onClick={simulateVoiceRecording} disabled={isRecording} className={`${isRecording ? 'bg-red-500 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'} text-white p-6 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 disabled:cursor-not-allowed`}><Mic className="w-8 h-8" /></button>
-        {isRecording && (<div className="absolute -top-16 left-1/2 transform -translate-x-1/2 bg-slate-800 px-4 py-2 rounded-full text-sm whitespace-nowrap">Écoute en cours...</div>)}
+        <button onClick={() => isRecording ? stopRecording() : startRecording()} className={`${isRecording ? 'bg-red-500 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'} text-white p-6 rounded-full shadow-2xl transition-all transform hover:scale-105 active:scale-95 disabled:cursor-not-allowed`}>
+          <Mic className="w-8 h-8" />
+        </button>
+        {isRecording && (
+          <div className="absolute -top-16 left-1/2 transform -translate-x-1/2 bg-slate-800 px-4 py-2 rounded-full text-sm whitespace-nowrap">Enregistrement...</div>
+        )}
       </div>
 
       {showNewNoteModal && (
