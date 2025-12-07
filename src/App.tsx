@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Wrench, AlertCircle, Mic, Trash2, Edit, Bell, Check, X, ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { Note, NewNote } from './types';
 import { getAllNotes, setNote as storageSetNote, deleteNoteById } from './storage';
+import { API_BASE_URL } from './apiConfig';
 
 const VocalNotesApp: React.FC = () => {
-  const API_BASE = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001';
   const [notes, setNotes] = useState<Note[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
@@ -63,7 +63,7 @@ const VocalNotesApp: React.FC = () => {
         const fd = new FormData();
         fd.append('file', blob, 'note.webm');
         try {
-          const resp = await fetch(`${API_BASE}/api/transcribe`, { method: 'POST', body: fd });
+          const resp = await fetch(`${API_BASE_URL}/api/transcribe`, { method: 'POST', body: fd });
           if (!resp.ok) {
             const text = await resp.text();
             throw new Error(`Transcription failed: ${text}`);
@@ -71,7 +71,7 @@ const VocalNotesApp: React.FC = () => {
           const data = await resp.json();
           const transcription = data.transcription || '';
           // ask backend to analyze
-          const analyze = await fetch(`${API_BASE}/api/analyze-note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcription }) });
+          const analyze = await fetch(`${API_BASE_URL}/api/analyze-note`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcription }) });
           const analyzed = analyze.ok ? await analyze.json() : { title: transcription.slice(0, 60), category: 'intervention', content: transcription, priority: 'normale' };
           setNewNote({ title: analyzed.title?.substring(0,100) || 'Note vocale', content: analyzed.content || transcription, category: analyzed.category || 'intervention', hasNotification: analyzed.priority === 'urgente', notificationDate: '' });
           setShowNewNoteModal(true);
